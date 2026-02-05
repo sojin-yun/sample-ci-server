@@ -1,6 +1,7 @@
 name: Likelion CI Test
 run-name: ${{ github.actor }} is testing out GitHub Actions 🚀
 on: [push]
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,6 +20,69 @@ jobs:
 
       - name: Build
         run: npm run build
-      
+
       - name: Test
         run: npm test
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            dist
+            package.json
+            package-lock.json
+            tsconfig.json
+            tsconfig.build.json
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      # 1. 빌드 결과물 다운로드 (checkout 대신 사용)
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+
+      # 2. SSH 키 설정
+      - name: Configure AWS credentials
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AWS_SSH_KEY }}" > ~/.ssh/aws.key
+          chmod 600 ~/.ssh/aws.key
+          ssh-keyscan -H "${{ secrets.EC2_PUBLIC_IP }}" >> ~/.ssh/known_hosts
+
+      # 3. 배포 및 서버 재시작
+      - name: Deploy to EC2
+        env:
+          EC2_PUBLIC_IP: ${{ secrets.EC2_PUBLIC_IP }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          # 원격 디렉토리 생성
+          ssh -i ~/.ssh/aws.key $EC2_USER@$EC2_PUBLIC_IP "mkdir -p ~/sample-server"
+
+          # 필요한 파일 전송 (dist 폴더와 설정 파일들)
+          scp -i ~/.ssh/aws.key -r \
+            dist \
+            package.json \
+            package-lock.json \
+            $EC2_USER@$EC2_PUBLIC_IP:~/sample-server/
+
+          # EC2 내부에서 실행될 명령어 (Heredoc 방식)
+          ssh -i ~/.ssh/aws.key $EC2_USER@$EC2_PUBLIC_IP << 'ENDSSH'
+            cd ~/sample-server
+            
+            # 의존성 설치 (배포용)
+            npm ci --omit=dev
+            
+            # PM2로 서버 재시작 (기존 프로세스 삭제 후 새로 시작)
+            pm2 delete sample-ci-server || true
+            pm2 start dist/main.js --name sample-server
+            
+            # 설정 저장 (인스턴스 재부팅 시 대비)
+            pm2 save
+          ENDSSH
+
+      - name: Final Status
+        run: echo "🍎 This job's status is ${{ job.status }}."
