@@ -74,7 +74,8 @@ jobs:
             npm ci --omit=dev
             
             # PM2로 서버 재시작 (기존 프로세스 삭제 후 새로 시작)
-            pm2 delete sample-ci-server || true
+            # pm2 delete sample-ci-server || true
+            pm2 delete sample-server || true
             pm2 start dist/main.js --name sample-server
             
             # 설정 저장 (인스턴스 재부팅 시 대비)
